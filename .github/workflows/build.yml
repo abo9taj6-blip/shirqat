@@ -1,0 +1,810 @@
+name: بناء APK دليل الشرقاط
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: إعداد Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: إنشاء هيكل المشروع
+        run: |
+          mkdir -p shirqat/lib/models
+          mkdir -p shirqat/lib/services
+          mkdir -p shirqat/lib/screens
+          mkdir -p shirqat/lib/widgets
+          mkdir -p shirqat/lib/utils
+          mkdir -p shirqat/android/app/src/main/res/mipmap-hdpi
+          mkdir -p shirqat/android/app/src/main/res/mipmap-mdpi
+          mkdir -p shirqat/android/app/src/main/res/mipmap-xhdpi
+          mkdir -p shirqat/android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p shirqat/android/app/src/main/res/mipmap-xxxhdpi
+          mkdir -p shirqat/android/app/src/main/res/values
+          mkdir -p shirqat/android/app/src/main/kotlin/com/shirqat/guide
+          mkdir -p shirqat/android/gradle/wrapper
+
+      - name: كتابة pubspec.yaml
+        run: |
+          cat > shirqat/pubspec.yaml << 'PUBSPEC'
+          name: shirqat_guide
+          description: دليل الشرقاط
+          version: 2.0.0+1
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          dependencies:
+            flutter:
+              sdk: flutter
+            shared_preferences: ^2.2.2
+            http: ^1.2.0
+            connectivity_plus: ^6.0.3
+            google_fonts: ^6.1.0
+            cached_network_image: ^3.3.1
+            url_launcher: ^6.2.4
+            intl: ^0.19.0
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: ^3.0.0
+          flutter:
+            uses-material-design: true
+          PUBSPEC
+
+      - name: كتابة main.dart
+        run: |
+          cat > shirqat/lib/main.dart << 'MAINDART'
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'package:shared_preferences/shared_preferences.dart';
+          import 'package:google_fonts/google_fonts.dart';
+          import 'package:http/http.dart' as http;
+          import 'package:url_launcher/url_launcher.dart';
+          import 'package:cached_network_image/cached_network_image.dart';
+          import 'dart:convert';
+
+          // ══════════════════════════════════════════════
+          // COLORS & THEME
+          // ══════════════════════════════════════════════
+          const kPrimary  = Color(0xFF0EA5E9);
+          const kDark     = Color(0xFF0369A1);
+          const kBg       = Color(0xFFF8FAFC);
+          const kCard     = Color(0xFFFFFFFF);
+          const kText     = Color(0xFF0F172A);
+          const kSub      = Color(0xFF64748B);
+          const kOrange   = Color(0xFFF97316);
+          const kYellow   = Color(0xFFEAB308);
+          const kGreen    = Color(0xFF22C55E);
+          const kRed      = Color(0xFFEF4444);
+          const kBorder   = Color(0xFFE2E8F0);
+
+          // ══════════════════════════════════════════════
+          // MODELS
+          // ══════════════════════════════════════════════
+          class Shop {
+            final String id, title, shopName, category, description, location, phone1;
+            final String? oldPrice, newPrice, phone2, whatsapp, imageUrl, hours;
+            final bool isVerified, isRestaurant;
+            final List<Map<String, String>> menu;
+            Shop({required this.id, required this.title, required this.shopName,
+              required this.category, required this.description, required this.location,
+              required this.phone1, this.oldPrice, this.newPrice, this.phone2,
+              this.whatsapp, this.imageUrl, this.hours,
+              this.isVerified = false, this.isRestaurant = false, this.menu = const []});
+            factory Shop.fromJson(Map<String, dynamic> j) => Shop(
+              id: j['id']??'', title: j['title']??'', shopName: j['shopName']??'',
+              category: j['category']??'', description: j['description']??'',
+              location: j['location']??'', phone1: j['phone1']??'',
+              oldPrice: j['oldPrice'], newPrice: j['newPrice'], phone2: j['phone2'],
+              whatsapp: j['whatsapp'], imageUrl: j['imageUrl'], hours: j['hours'],
+              isVerified: j['isVerified']??false, isRestaurant: j['isRestaurant']??false,
+              menu: (j['menu'] as List<dynamic>? ?? []).map((e) => Map<String, String>.from(e)).toList());
+            Map<String, dynamic> toJson() => {'id':id,'title':title,'shopName':shopName,
+              'category':category,'description':description,'location':location,'phone1':phone1,
+              'oldPrice':oldPrice,'newPrice':newPrice,'phone2':phone2,'whatsapp':whatsapp,
+              'imageUrl':imageUrl,'hours':hours,'isVerified':isVerified,
+              'isRestaurant':isRestaurant,'menu':menu};
+          }
+
+          class Doctor {
+            final String id, name, specialty, description, location, phone1, hours;
+            final String? phone2, imageUrl;
+            final bool isVerified;
+            Doctor({required this.id, required this.name, required this.specialty,
+              required this.description, required this.location, required this.phone1,
+              required this.hours, this.phone2, this.imageUrl, this.isVerified = false});
+            factory Doctor.fromJson(Map<String, dynamic> j) => Doctor(
+              id: j['id']??'', name: j['name']??'', specialty: j['specialty']??'',
+              description: j['description']??'', location: j['location']??'',
+              phone1: j['phone1']??'', hours: j['hours']??'',
+              phone2: j['phone2'], imageUrl: j['imageUrl'], isVerified: j['isVerified']??false);
+            Map<String, dynamic> toJson() => {'id':id,'name':name,'specialty':specialty,
+              'description':description,'location':location,'phone1':phone1,'hours':hours,
+              'phone2':phone2,'imageUrl':imageUrl,'isVerified':isVerified};
+          }
+
+          class Taxi {
+            final String id, name, description, phone1, carType, location;
+            final String? phone2, imageUrl, hours;
+            final bool isVerified;
+            Taxi({required this.id, required this.name, required this.description,
+              required this.phone1, required this.carType, required this.location,
+              this.phone2, this.imageUrl, this.hours, this.isVerified = false});
+            factory Taxi.fromJson(Map<String, dynamic> j) => Taxi(
+              id: j['id']??'', name: j['name']??'', description: j['description']??'',
+              phone1: j['phone1']??'', carType: j['carType']??'', location: j['location']??'',
+              phone2: j['phone2'], imageUrl: j['imageUrl'], hours: j['hours'],
+              isVerified: j['isVerified']??false);
+            Map<String, dynamic> toJson() => {'id':id,'name':name,'description':description,
+              'phone1':phone1,'carType':carType,'location':location,'phone2':phone2,
+              'imageUrl':imageUrl,'hours':hours,'isVerified':isVerified};
+          }
+
+          // ══════════════════════════════════════════════
+          // DEFAULT DATA
+          // ══════════════════════════════════════════════
+          final defaultShops = [
+            Shop(id:'1',title:'عرض السلة الغذائية',shopName:'أسواق البركة',category:'food',
+              description:'كيس رز بسمتي 5 كيلو + زيت نباتي مجاناً + معجون طماطم.',
+              location:'الشرقاط - حي العسكري',oldPrice:'15,000',newPrice:'12,500',
+              phone1:'07701234567',whatsapp:'9647701234567',
+              imageUrl:'https://picsum.photos/seed/food1/400/300',isVerified:true),
+            Shop(id:'2',title:'تنزيلات الكهربائيات - 20%',shopName:'معرض الشرقاط',category:'electronics',
+              description:'تنزيلات على السخانات والمدافئ بضمان سنة كاملة.',
+              location:'الشرقاط - السوق العام',oldPrice:'85,000',newPrice:'68,000',
+              phone1:'07701112223',imageUrl:'https://picsum.photos/seed/elec1/400/300'),
+            Shop(id:'3',title:'مطعم الزيتون',shopName:'مطعم الزيتون',category:'food',
+              description:'مشويات عراقية أصيلة ووجبات سريعة.',
+              location:'الشرقاط - مدخل المدينة',phone1:'07704445556',
+              hours:'10:00 ص - 12:00 م',imageUrl:'https://picsum.photos/seed/rest3/400/300',
+              isRestaurant:true,menu:[{'name':'كباب عراقي','price':'10,000 د.ع'},{'name':'برجر','price':'6,000 د.ع'}]),
+            Shop(id:'4',title:'الأناقة الرجالية',shopName:'الأناقة الرجالية',category:'clothes',
+              description:'أحدث ماركات الملابس التركية والعالمية.',
+              location:'الشرقاط - السوق العام',phone1:'07705556667',
+              imageUrl:'https://picsum.photos/seed/fashion/400/300'),
+            Shop(id:'5',title:'صيدلية الرافدين',shopName:'صيدلية الرافدين',category:'pharma',
+              description:'كافة الأدوية والمستلزمات الطبية. قياس ضغط وسكر.',
+              location:'الشرقاط - قرب المستشفى',phone1:'07706667778',
+              imageUrl:'https://picsum.photos/seed/pharma2/400/300'),
+          ];
+
+          final defaultDoctors = [
+            Doctor(id:'d1',name:'د. أحمد الجبوري',specialty:'باطنية وقلبية',
+              description:'خبرة 15 عاماً في أمراض القلب والشرايين والضغط والسكري.',
+              location:'الشرقاط - مجمع الشفاء الطبي',phone1:'07701112223',
+              phone2:'07801112223',hours:'4:00 م - 9:00 م',
+              imageUrl:'https://picsum.photos/seed/doc1/200/200',isVerified:true),
+            Doctor(id:'d2',name:'د. سارة العبيدي',specialty:'نسائية وتوليد',
+              description:'متابعة حمل وولادة، علاج عقم، سونار ملون.',
+              location:'الشرقاط - قرب المستشفى',phone1:'07704445556',
+              hours:'9:00 ص - 2:00 م',imageUrl:'https://picsum.photos/seed/doc2/200/200'),
+            Doctor(id:'d3',name:'د. علي السامرائي',specialty:'طب وجراحة العيون',
+              description:'فحص بصر بالكمبيوتر، عمليات الماء الأبيض.',
+              location:'الشرقاط - مجمع النور الطبي',phone1:'07705556667',
+              hours:'3:00 م - 8:00 م',imageUrl:'https://picsum.photos/seed/doc3/200/200'),
+          ];
+
+          final defaultTaxis = [
+            Taxi(id:'t1',name:'تكسي الأمان',description:'خدمة داخل وخارج القضاء 24 ساعة.',
+              phone1:'07709998887',phone2:'07809998887',carType:'سايبا - بيضاء',
+              location:'الشرقاط - كراج بغداد',hours:'24 ساعة',
+              imageUrl:'https://picsum.photos/seed/taxi1/200/200',isVerified:true),
+            Taxi(id:'t2',name:'تكسي الفرسان',description:'مشاوير داخلية وسفرات للمحافظات.',
+              phone1:'07707776665',carType:'إلنترا - صفراء',
+              location:'الشرقاط - السوق العام',imageUrl:'https://picsum.photos/seed/taxi2/200/200'),
+            Taxi(id:'t3',name:'تكسي النجوم',description:'توصيل بأسعار تنافسية في حي العسكري.',
+              phone1:'07705554443',phone2:'07505554443',carType:'أوبتيما - صفراء',
+              location:'الشرقاط - حي العسكري',imageUrl:'https://picsum.photos/seed/taxi3/200/200'),
+          ];
+
+          // ══════════════════════════════════════════════
+          // STORAGE SERVICE
+          // ══════════════════════════════════════════════
+          class Storage {
+            static SharedPreferences? _p;
+            static Future<void> init() async { _p = await SharedPreferences.getInstance(); }
+            static List<Shop> getShops() => _getList('shops', defaultShops, Shop.fromJson);
+            static Future<void> saveShops(List<Shop> v) => _saveList('shops', v.map((e)=>e.toJson()).toList());
+            static List<Doctor> getDoctors() => _getList('doctors', defaultDoctors, Doctor.fromJson);
+            static Future<void> saveDoctors(List<Doctor> v) => _saveList('doctors', v.map((e)=>e.toJson()).toList());
+            static List<Taxi> getTaxis() => _getList('taxis', defaultTaxis, Taxi.fromJson);
+            static Future<void> saveTaxis(List<Taxi> v) => _saveList('taxis', v.map((e)=>e.toJson()).toList());
+            static Map<String,dynamic>? getPrayer() { final r=_p?.getString('prayer'); return r==null?null:jsonDecode(r); }
+            static Future<void> savePrayer(Map<String,dynamic> d) async => _p?.setString('prayer', jsonEncode(d));
+            static Map<String,dynamic>? getWeather() { final r=_p?.getString('weather'); return r==null?null:jsonDecode(r); }
+            static Future<void> saveWeather(Map<String,dynamic> d) async => _p?.setString('weather', jsonEncode(d));
+            static List<T> _getList<T>(String k, List<T> fb, T Function(Map<String,dynamic>) fromJson) {
+              try { final r=_p?.getString('shirqat_$k'); if(r==null) return fb;
+                return (jsonDecode(r) as List).map((e)=>fromJson(e)).toList(); } catch(_) { return fb; } }
+            static Future<void> _saveList(String k, List v) async =>
+              _p?.setString('shirqat_$k', jsonEncode(v));
+          }
+
+          // ══════════════════════════════════════════════
+          // API SERVICE
+          // ══════════════════════════════════════════════
+          class Api {
+            static Future<Map<String,String>?> getPrayerTimes() async {
+              final cached = Storage.getPrayer();
+              if (cached != null) {
+                final d = DateTime.parse(cached['date']);
+                final n = DateTime.now();
+                if (d.year==n.year && d.month==n.month && d.day==n.day)
+                  return Map<String,String>.from(cached['timings']);
+              }
+              try {
+                final r = await http.get(Uri.parse(
+                  'https://api.aladhan.com/v1/timingsByCity?city=Ash%20Sharqat&country=Iraq&method=3'))
+                  .timeout(const Duration(seconds:7));
+                if (r.statusCode==200) {
+                  final t = jsonDecode(r.body)['data']['timings'] as Map<String,dynamic>;
+                  final clean = t.map((k,v)=>MapEntry(k, (v as String).split(' ').first));
+                  await Storage.savePrayer({'timings':clean,'date':DateTime.now().toIso8601String()});
+                  return Map<String,String>.from(clean);
+                }
+              } catch(_) {}
+              return cached!=null ? Map<String,String>.from(cached['timings']) : null;
+            }
+
+            static Future<Map<String,dynamic>?> getWeather() async {
+              final c = Storage.getWeather();
+              if (c!=null && DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(c['at'])).inHours<3) return c;
+              try {
+                final r = await http.get(Uri.parse(
+                  'https://api.open-meteo.com/v1/forecast?latitude=35.5033&longitude=43.2433&current=temperature_2m,weather_code'))
+                  .timeout(const Duration(seconds:5));
+                if (r.statusCode==200) {
+                  final d = jsonDecode(r.body)['current'];
+                  final res = {'temp':d['temperature_2m'].toDouble(),'code':d['weather_code'],'at':DateTime.now().millisecondsSinceEpoch};
+                  await Storage.saveWeather(res); return res;
+                }
+              } catch(_) {}
+              return c;
+            }
+
+            static String weatherEmoji(int c) {
+              if(c==0||c==1) return '☀️'; if(c==2||c==3) return '⛅';
+              if(c==45) return '🌫️'; if(c>=51&&c<=67) return '🌧️';
+              if(c>=71&&c<=77) return '❄️'; if(c>=95) return '⛈️'; return '🌤️';
+            }
+            static String weatherLabel(int c) {
+              const m={0:'صافي',1:'صافي غالباً',2:'غائم جزئياً',3:'غائم',45:'ضباب',
+                51:'رذاذ خفيف',61:'مطر خفيف',71:'ثلج خفيف',95:'عاصفة رعدية'};
+              return m[c]??'';
+            }
+          }
+
+          // ══════════════════════════════════════════════
+          // MAIN
+          // ══════════════════════════════════════════════
+          void main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(statusBarColor: Colors.transparent));
+            await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+            await Storage.init();
+            runApp(const ShirqatApp());
+          }
+
+          class ShirqatApp extends StatelessWidget {
+            const ShirqatApp({super.key});
+            @override
+            Widget build(BuildContext context) => MaterialApp(
+              title: 'دليل الشرقاط', debugShowCheckedModeBanner: false,
+              theme: ThemeData(useMaterial3:true, colorScheme: ColorScheme.fromSeed(seedColor:kPrimary),
+                scaffoldBackgroundColor: kBg, textTheme: GoogleFonts.cairoTextTheme()),
+              builder: (ctx, child) => Directionality(textDirection: TextDirection.rtl, child: child!),
+              home: const SplashScreen(),
+            );
+          }
+
+          // ══════════════════════════════════════════════
+          // SPLASH
+          // ══════════════════════════════════════════════
+          class SplashScreen extends StatefulWidget {
+            const SplashScreen({super.key});
+            @override State<SplashScreen> createState() => _SplashState();
+          }
+          class _SplashState extends State<SplashScreen> with SingleTickerProviderStateMixin {
+            late AnimationController _c;
+            late Animation<double> _s, _f;
+            @override void initState() {
+              super.initState();
+              _c = AnimationController(vsync:this, duration:const Duration(milliseconds:800));
+              _s = Tween<double>(begin:0.5,end:1.0).animate(CurvedAnimation(parent:_c,curve:Curves.elasticOut));
+              _f = Tween<double>(begin:0.0,end:1.0).animate(CurvedAnimation(parent:_c,curve:Curves.easeIn));
+              _c.forward();
+              Future.delayed(const Duration(seconds:2), () {
+                if (mounted) Navigator.pushReplacement(context,
+                  PageRouteBuilder(pageBuilder:(_,__,___)=>const HomeScreen(),
+                    transitionsBuilder:(_,a,__,child)=>FadeTransition(opacity:a,child:child),
+                    transitionDuration:const Duration(milliseconds:400)));
+              });
+            }
+            @override void dispose() { _c.dispose(); super.dispose(); }
+            @override Widget build(BuildContext ctx) => Scaffold(
+              body: Container(
+                decoration: const BoxDecoration(gradient: LinearGradient(
+                  colors:[kPrimary,kDark], begin:Alignment.topRight, end:Alignment.bottomLeft)),
+                child: Center(child: FadeTransition(opacity:_f, child: ScaleTransition(scale:_s,
+                  child: Column(mainAxisSize:MainAxisSize.min, children:[
+                    Container(width:100,height:100,decoration:BoxDecoration(color:Colors.white,
+                      borderRadius:BorderRadius.circular(28),
+                      boxShadow:[BoxShadow(color:Colors.black26,blurRadius:20,offset:Offset(0,8))]),
+                      child: const Center(child: Text('📍', style: TextStyle(fontSize:52)))),
+                    const SizedBox(height:24),
+                    const Text('دليل الشرقاط',style:TextStyle(color:Colors.white,fontSize:32,fontWeight:FontWeight.w900)),
+                    const SizedBox(height:8),
+                    const Text('كل ما تحتاجه في مدينتك',style:TextStyle(color:Colors.white70,fontSize:15)),
+                  ])))),
+              ),
+            );
+          }
+
+          // ══════════════════════════════════════════════
+          // HOME SCREEN
+          // ══════════════════════════════════════════════
+          class HomeScreen extends StatelessWidget {
+            const HomeScreen({super.key});
+            @override Widget build(BuildContext ctx) => Scaffold(
+              backgroundColor: kBg,
+              body: SafeArea(child: CustomScrollView(slivers:[
+                SliverToBoxAdapter(child: Container(color:kCard,
+                  padding:const EdgeInsets.symmetric(horizontal:20,vertical:16),
+                  child: Row(mainAxisAlignment:MainAxisAlignment.spaceBetween, children:[
+                    Column(crossAxisAlignment:CrossAxisAlignment.start, children:[
+                      const Text('دليل الشرقاط',style:TextStyle(fontWeight:FontWeight.w900,fontSize:22,color:kPrimary)),
+                      const Text('كل ما تحتاجه في مدينتك',style:TextStyle(color:kSub,fontSize:12)),
+                    ]),
+                    Container(width:44,height:44,decoration:BoxDecoration(
+                      color:kPrimary.withOpacity(0.1),borderRadius:BorderRadius.circular(14)),
+                      child:const Icon(Icons.location_on,color:kPrimary)),
+                  ]))),
+                SliverPadding(padding:const EdgeInsets.all(20),
+                  sliver:SliverList(delegate:SliverChildListDelegate([
+                    const PrayerWeatherWidget(),
+                    const SizedBox(height:24),
+                    const Text('الخدمات',style:TextStyle(fontWeight:FontWeight.w900,fontSize:18)),
+                    const SizedBox(height:14),
+                    _BigCard(title:'دليل الأطباء',sub:'عيادات وأطباء الشرقاط',emoji:'🩺',color:kPrimary,
+                      onTap:()=>Navigator.push(ctx,MaterialPageRoute(builder:(_)=>const DoctorsScreen()))),
+                    const SizedBox(height:12),
+                    Row(children:[
+                      Expanded(child:_SmallCard(title:'دليل الشرقاط',sub:'عروض ومحلات',emoji:'🏪',color:kOrange,
+                        onTap:()=>Navigator.push(ctx,MaterialPageRoute(builder:(_)=>const ShopsScreen())))),
+                      const SizedBox(width:12),
+                      Expanded(child:_SmallCard(title:'دليل التكسي',sub:'سواق ومشاوير',emoji:'🚕',color:kYellow,
+                        onTap:()=>Navigator.push(ctx,MaterialPageRoute(builder:(_)=>const TaxisScreen())))),
+                    ]),
+                    const SizedBox(height:20),
+                    _EmergCard(),
+                    const SizedBox(height:12),
+                    _AdCard(),
+                  ]))),
+              ])),
+            );
+          }
+
+          class _BigCard extends StatelessWidget {
+            final String title,sub,emoji; final Color color; final VoidCallback onTap;
+            const _BigCard({required this.title,required this.sub,required this.emoji,required this.color,required this.onTap});
+            @override Widget build(BuildContext ctx) => GestureDetector(onTap:onTap,
+              child:Container(padding:const EdgeInsets.all(16),
+                decoration:BoxDecoration(color:kCard,borderRadius:BorderRadius.circular(20),
+                  border:Border.all(color:kBorder),
+                  boxShadow:[BoxShadow(color:Colors.black.withOpacity(0.04),blurRadius:8,offset:const Offset(0,2))]),
+                child:Row(children:[
+                  Container(width:52,height:52,decoration:BoxDecoration(color:color.withOpacity(0.1),borderRadius:BorderRadius.circular(14)),
+                    child:Center(child:Text(emoji,style:const TextStyle(fontSize:26)))),
+                  const SizedBox(width:14),
+                  Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    Text(title,style:const TextStyle(fontWeight:FontWeight.w800,fontSize:16)),
+                    Text(sub,style:const TextStyle(color:kSub,fontSize:12))])),
+                  Icon(Icons.chevron_left,color:color),
+                ])));
+          }
+
+          class _SmallCard extends StatelessWidget {
+            final String title,sub,emoji; final Color color; final VoidCallback onTap;
+            const _SmallCard({required this.title,required this.sub,required this.emoji,required this.color,required this.onTap});
+            @override Widget build(BuildContext ctx) => GestureDetector(onTap:onTap,
+              child:Container(padding:const EdgeInsets.all(16),
+                decoration:BoxDecoration(color:kCard,borderRadius:BorderRadius.circular(20),
+                  border:Border.all(color:kBorder),
+                  boxShadow:[BoxShadow(color:Colors.black.withOpacity(0.04),blurRadius:8,offset:const Offset(0,2))]),
+                child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  Container(width:46,height:46,decoration:BoxDecoration(color:color.withOpacity(0.1),borderRadius:BorderRadius.circular(12)),
+                    child:Center(child:Text(emoji,style:const TextStyle(fontSize:22)))),
+                  const SizedBox(height:10),
+                  Text(title,style:const TextStyle(fontWeight:FontWeight.w800,fontSize:13)),
+                  Text(sub,style:const TextStyle(color:kSub,fontSize:11))])));
+          }
+
+          class _EmergCard extends StatelessWidget {
+            @override Widget build(BuildContext ctx) => Container(
+              padding:const EdgeInsets.all(14),
+              decoration:BoxDecoration(color:const Color(0xFFFFF1F2),borderRadius:BorderRadius.circular(18),
+                border:Border.all(color:const Color(0xFFFECACA))),
+              child:Row(children:[
+                Container(width:46,height:46,decoration:BoxDecoration(color:kRed,borderRadius:BorderRadius.circular(12)),
+                  child:const Icon(Icons.emergency,color:Colors.white,size:24)),
+                const SizedBox(width:12),
+                const Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  Text('في حال الطوارئ',style:TextStyle(fontWeight:FontWeight.w800,color:Color(0xFF991B1B))),
+                  Text('اضغط للاتصال فوراً',style:TextStyle(color:Color(0xFFDC2626),fontSize:12))])),
+                GestureDetector(onTap:()=>launchUrl(Uri.parse('tel:911')),
+                  child:Container(padding:const EdgeInsets.symmetric(horizontal:14,vertical:8),
+                    decoration:BoxDecoration(color:kRed,borderRadius:BorderRadius.circular(10)),
+                    child:const Text('911',style:TextStyle(color:Colors.white,fontWeight:FontWeight.w900,fontSize:18)))),
+              ]));
+          }
+
+          class _AdCard extends StatelessWidget {
+            @override Widget build(BuildContext ctx) => GestureDetector(
+              onTap:()=>launchUrl(Uri.parse('https://wa.me/9647740100909')),
+              child:Container(padding:const EdgeInsets.all(16),
+                decoration:BoxDecoration(gradient:const LinearGradient(colors:[kPrimary,kDark],
+                  begin:Alignment.topRight,end:Alignment.bottomLeft),borderRadius:BorderRadius.circular(18)),
+                child:const Row(children:[
+                  Icon(Icons.add_business,color:Colors.white,size:26),SizedBox(width:12),
+                  Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    Text('أضف عملك في الدليل',style:TextStyle(color:Colors.white,fontWeight:FontWeight.w800,fontSize:14)),
+                    Text('تواصل معنا عبر واتساب',style:TextStyle(color:Colors.white70,fontSize:12))])),
+                  Icon(Icons.chevron_left,color:Colors.white)])));
+          }
+
+          // ══════════════════════════════════════════════
+          // PRAYER & WEATHER WIDGET
+          // ══════════════════════════════════════════════
+          class PrayerWeatherWidget extends StatefulWidget {
+            const PrayerWeatherWidget({super.key});
+            @override State<PrayerWeatherWidget> createState() => _PWState();
+          }
+          class _PWState extends State<PrayerWeatherWidget> {
+            Map<String,String>? _prayer; Map<String,dynamic>? _weather; bool _loading=true;
+            @override void initState() { super.initState(); _load(); }
+            Future<void> _load() async {
+              final r = await Future.wait([Api.getPrayerTimes(), Api.getWeather()]);
+              if (mounted) setState((){ _prayer=r[0] as Map<String,String>?; _weather=r[1] as Map<String,dynamic>?; _loading=false; });
+            }
+            String _fmt(String t) { if(t.isEmpty) return ''; final p=t.split(':'); final h=int.tryParse(p[0])??0;
+              final m=p.length>1?p[1]:'00'; return '${h%12==0?12:h%12}:$m ${h>=12?"م":"ص"}'; }
+            int _next() { if(_prayer==null) return 0;
+              final keys=['Fajr','Dhuhr','Asr','Maghrib','Isha'];
+              final now=DateTime.now(); final cur=now.hour*60+now.minute;
+              for(int i=0;i<keys.length;i++){final sp=(_prayer![keys[i]]??'0:0').split(':');
+                final h=int.tryParse(sp[0])??0; final m=sp.length>1?(int.tryParse(sp[1])??0):0;
+                if(h*60+m>cur) return i;} return 0; }
+            @override Widget build(BuildContext ctx) {
+              if (_loading) return Container(height:150,decoration:BoxDecoration(
+                gradient:const LinearGradient(colors:[kPrimary,kDark],begin:Alignment.topRight,end:Alignment.bottomLeft),
+                borderRadius:BorderRadius.circular(22)),
+                child:const Center(child:CircularProgressIndicator(color:Colors.white)));
+              final prayers=[
+                {'k':'Fajr','n':'الفجر','e':'🌅'},{'k':'Dhuhr','n':'الظهر','e':'☀️'},
+                {'k':'Asr','n':'العصر','e':'🌤️'},{'k':'Maghrib','n':'المغرب','e':'🌇'},
+                {'k':'Isha','n':'العشاء','e':'🌙'}];
+              final ni=_next();
+              return Container(decoration:BoxDecoration(
+                gradient:const LinearGradient(colors:[kPrimary,kDark],begin:Alignment.topRight,end:Alignment.bottomLeft),
+                borderRadius:BorderRadius.circular(22),
+                boxShadow:[BoxShadow(color:kPrimary.withOpacity(0.3),blurRadius:16,offset:const Offset(0,6))]),
+                padding:const EdgeInsets.all(16),
+                child:Column(children:[
+                  Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[
+                    Row(children:[
+                      Container(padding:const EdgeInsets.all(7),
+                        decoration:BoxDecoration(color:Colors.white24,borderRadius:BorderRadius.circular(10)),
+                        child:const Icon(Icons.access_time,color:Colors.white,size:17)),
+                      const SizedBox(width:10),
+                      const Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                        Text('مواقيت الصلاة',style:TextStyle(color:Colors.white,fontWeight:FontWeight.w800,fontSize:13)),
+                        Text('الشرقاط، صلاح الدين',style:TextStyle(color:Colors.white70,fontSize:10))])]),
+                    if(_weather!=null) Container(padding:const EdgeInsets.symmetric(horizontal:10,vertical:6),
+                      decoration:BoxDecoration(color:Colors.white24,borderRadius:BorderRadius.circular(10)),
+                      child:Row(children:[
+                        Text(Api.weatherEmoji((_weather!['code'] as num).toInt()),style:const TextStyle(fontSize:15)),
+                        const SizedBox(width:5),
+                        Text('${(_weather!['temp'] as double).round()}°',
+                          style:const TextStyle(color:Colors.white,fontWeight:FontWeight.w800,fontSize:14))]))]),
+                  const SizedBox(height:14),
+                  if(_prayer!=null) Row(children:List.generate(5,(i){
+                    final p=prayers[i]; final isN=i==ni;
+                    return Expanded(child:AnimatedContainer(duration:const Duration(milliseconds:300),
+                      margin:const EdgeInsets.symmetric(horizontal:2),padding:const EdgeInsets.symmetric(vertical:7),
+                      decoration:BoxDecoration(color:isN?Colors.white:Colors.white24,borderRadius:BorderRadius.circular(12),
+                        border:Border.all(color:isN?Colors.white:Colors.white24)),
+                      child:Column(children:[
+                        Text(p['e']!,style:const TextStyle(fontSize:15)),const SizedBox(height:3),
+                        Text(p['n']!,style:TextStyle(color:isN?kPrimary:Colors.white,fontWeight:FontWeight.w800,fontSize:9)),
+                        const SizedBox(height:1),
+                        Text(_fmt(_prayer![p['k']]??''),style:TextStyle(color:isN?kDark:Colors.white,fontWeight:FontWeight.w700,fontSize:8),textAlign:TextAlign.center)])));
+                  })) else const Text('تعذر تحميل المواقيت',style:TextStyle(color:Colors.white70))]));
+            }
+          }
+
+          // ══════════════════════════════════════════════
+          // SHARED WIDGETS
+          // ══════════════════════════════════════════════
+          class ItemCard extends StatelessWidget {
+            final String title,subtitle,location,imageUrl; final bool isVerified; final VoidCallback onTap;
+            const ItemCard({super.key,required this.title,required this.subtitle,required this.location,
+              required this.imageUrl,required this.onTap,this.isVerified=false});
+            @override Widget build(BuildContext ctx) => GestureDetector(onTap:onTap,
+              child:Container(margin:const EdgeInsets.only(bottom:10),padding:const EdgeInsets.all(12),
+                decoration:BoxDecoration(color:kCard,borderRadius:BorderRadius.circular(18),
+                  border:Border.all(color:isVerified?kPrimary.withOpacity(0.3):kBorder),
+                  boxShadow:[BoxShadow(color:Colors.black.withOpacity(0.04),blurRadius:8,offset:const Offset(0,2))]),
+                child:Row(children:[
+                  ClipRRect(borderRadius:BorderRadius.circular(12),
+                    child:CachedNetworkImage(imageUrl:imageUrl,width:66,height:66,fit:BoxFit.cover,
+                      placeholder:(_,__)=>Container(width:66,height:66,color:const Color(0xFFF1F5F9),
+                        child:const Icon(Icons.image,color:Color(0xFFCBD5E1))),
+                      errorWidget:(_,__,___)=>Container(width:66,height:66,color:const Color(0xFFF1F5F9),
+                        child:const Icon(Icons.store,color:Color(0xFFCBD5E1))))),
+                  const SizedBox(width:12),
+                  Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                    Row(children:[
+                      Expanded(child:Text(title,style:const TextStyle(fontWeight:FontWeight.w800,fontSize:13),maxLines:1,overflow:TextOverflow.ellipsis)),
+                      if(isVerified) const Icon(Icons.verified,color:kPrimary,size:15)]),
+                    const SizedBox(height:3),
+                    Text(subtitle,style:const TextStyle(color:kPrimary,fontWeight:FontWeight.w600,fontSize:11)),
+                    const SizedBox(height:3),
+                    Row(children:[const Icon(Icons.location_on_outlined,size:11,color:kSub),const SizedBox(width:2),
+                      Expanded(child:Text(location,style:const TextStyle(color:kSub,fontSize:10),maxLines:1,overflow:TextOverflow.ellipsis))])])),
+                  const Icon(Icons.chevron_left,color:Color(0xFFCBD5E1))])));
+          }
+
+          Widget searchField(String hint, ValueChanged<String> onChange) => Container(
+            decoration:BoxDecoration(color:kCard,borderRadius:BorderRadius.circular(14),border:Border.all(color:kBorder)),
+            child:TextField(onChanged:onChange,textAlign:TextAlign.right,
+              decoration:InputDecoration(hintText:hint,hintStyle:const TextStyle(color:kSub,fontSize:13),
+                prefixIcon:const Icon(Icons.search,color:kSub),border:InputBorder.none,
+                contentPadding:const EdgeInsets.symmetric(vertical:13))));
+
+          Widget detailRow(IconData icon, String label, String value, {bool phone=false}) =>
+            Container(margin:const EdgeInsets.only(bottom:10),padding:const EdgeInsets.all(13),
+              decoration:BoxDecoration(color:const Color(0xFFF8FAFC),borderRadius:BorderRadius.circular(13)),
+              child:Row(children:[Icon(icon,color:kPrimary,size:19),const SizedBox(width:11),
+                Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  Text(label,style:const TextStyle(color:kSub,fontSize:10)),
+                  const SizedBox(height:2),
+                  Text(value,style:const TextStyle(fontWeight:FontWeight.w700,fontSize:13))])),
+                if(phone) GestureDetector(onTap:()=>launchUrl(Uri.parse('tel:$value')),
+                  child:Container(padding:const EdgeInsets.symmetric(horizontal:13,vertical:8),
+                    decoration:BoxDecoration(color:kPrimary,borderRadius:BorderRadius.circular(10)),
+                    child:const Row(children:[Icon(Icons.phone,color:Colors.white,size:14),SizedBox(width:4),
+                      Text('اتصال',style:TextStyle(color:Colors.white,fontWeight:FontWeight.w700,fontSize:12))])))
+              ]));
+
+          // ══════════════════════════════════════════════
+          // SHOPS SCREEN
+          // ══════════════════════════════════════════════
+          class ShopsScreen extends StatefulWidget {
+            const ShopsScreen({super.key});
+            @override State<ShopsScreen> createState() => _ShopsState();
+          }
+          class _ShopsState extends State<ShopsScreen> {
+            late List<Shop> _shops; String _q='',_cat='all';
+            final _cats=[['all','الكل','🏪'],['food','مواد غذائية','🥑'],['clothes','ملابس','👕'],
+              ['electronics','كهربائيات','💡'],['pharma','صيدليات','💊']];
+            @override void initState() { super.initState(); _shops=Storage.getShops(); }
+            List<Shop> get _filtered => _shops.where((s){
+              final mc=_cat=='all'||s.category==_cat;
+              final mq=_q.isEmpty||s.title.contains(_q)||s.shopName.contains(_q);
+              return mc&&mq;}).toList()..sort((a,b)=>(b.isVerified?1:0)-(a.isVerified?1:0));
+            @override Widget build(BuildContext ctx) => Scaffold(backgroundColor:kBg,
+              appBar:AppBar(title:const Text('دليل الشرقاط'),leading:IconButton(icon:const Icon(Icons.arrow_forward_ios),onPressed:()=>Navigator.pop(ctx))),
+              body:Column(children:[
+                Container(color:kCard,padding:const EdgeInsets.fromLTRB(16,10,16,0),child:Column(children:[
+                  searchField('ابحث عن محل أو عرض...',(v)=>setState(()=>_q=v)),
+                  const SizedBox(height:10),
+                  SizedBox(height:38,child:ListView(scrollDirection:Axis.horizontal,reverse:true,
+                    children:_cats.map((c){final a=_cat==c[0];return GestureDetector(onTap:()=>setState(()=>_cat=c[0]),
+                      child:AnimatedContainer(duration:const Duration(milliseconds:200),
+                        margin:const EdgeInsets.only(right:7),padding:const EdgeInsets.symmetric(horizontal:13,vertical:7),
+                        decoration:BoxDecoration(color:a?kPrimary:kBg,borderRadius:BorderRadius.circular(18),
+                          border:Border.all(color:a?kPrimary:kBorder)),
+                        child:Row(children:[Text(c[2],style:const TextStyle(fontSize:13)),const SizedBox(width:4),
+                          Text(c[1],style:TextStyle(color:a?Colors.white:kSub,fontWeight:FontWeight.w700,fontSize:11))])));}).toList())),
+                  const SizedBox(height:8)])),
+                Expanded(child:_filtered.isEmpty
+                  ? const Center(child:Text('لا توجد نتائج',style:TextStyle(color:kSub)))
+                  : ListView.builder(padding:const EdgeInsets.all(16),itemCount:_filtered.length,
+                    itemBuilder:(_,i){final s=_filtered[i];return ItemCard(title:s.title,subtitle:s.shopName,
+                      location:s.location,imageUrl:s.imageUrl??'https://picsum.photos/seed/shop/300/200',
+                      isVerified:s.isVerified,onTap:()=>Navigator.push(ctx,MaterialPageRoute(builder:(_)=>ShopDetail(shop:s))));}))]));
+          }
+
+          class ShopDetail extends StatelessWidget {
+            final Shop shop; const ShopDetail({super.key,required this.shop});
+            @override Widget build(BuildContext ctx) => Scaffold(backgroundColor:kBg,
+              appBar:AppBar(title:Text(shop.shopName),leading:IconButton(icon:const Icon(Icons.arrow_forward_ios),onPressed:()=>Navigator.pop(ctx))),
+              body:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                SizedBox(height:210,width:double.infinity,child:Image.network(shop.imageUrl??'',fit:BoxFit.cover,
+                  errorBuilder:(_,__,___)=>Container(color:const Color(0xFFF1F5F9),child:const Icon(Icons.store,size:60,color:Color(0xFFCBD5E1))))),
+                Padding(padding:const EdgeInsets.all(20),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  if(shop.newPrice!=null) Container(padding:const EdgeInsets.symmetric(horizontal:12,vertical:8),
+                    decoration:BoxDecoration(color:kOrange.withOpacity(0.1),borderRadius:BorderRadius.circular(10)),
+                    child:Row(mainAxisSize:MainAxisSize.min,children:[
+                      Text(shop.newPrice!,style:const TextStyle(color:kOrange,fontWeight:FontWeight.w900,fontSize:18)),
+                      if(shop.oldPrice!=null)...[const SizedBox(width:10),
+                        Text(shop.oldPrice!,style:const TextStyle(color:kSub,fontSize:13,decoration:TextDecoration.lineThrough))]])),
+                  const SizedBox(height:12),
+                  Text(shop.title,style:const TextStyle(fontWeight:FontWeight.w900,fontSize:19)),
+                  const SizedBox(height:12),
+                  Container(padding:const EdgeInsets.all(13),
+                    decoration:BoxDecoration(color:kPrimary.withOpacity(0.05),borderRadius:BorderRadius.circular(13)),
+                    child:Text(shop.description,style:const TextStyle(fontSize:13,height:1.8))),
+                  const SizedBox(height:14),
+                  detailRow(Icons.location_on,'الموقع',shop.location),
+                  if(shop.hours!=null) detailRow(Icons.access_time,'أوقات العمل',shop.hours!),
+                  detailRow(Icons.phone,'رقم التواصل',shop.phone1,phone:true),
+                  if(shop.phone2!=null) detailRow(Icons.phone,'رقم بديل',shop.phone2!,phone:true),
+                  if(shop.isRestaurant&&shop.menu.isNotEmpty)...[
+                    const SizedBox(height:14),
+                    const Text('قائمة الطعام',style:TextStyle(fontWeight:FontWeight.w900,fontSize:15)),
+                    const SizedBox(height:8),
+                    ...shop.menu.map((item)=>Container(margin:const EdgeInsets.only(bottom:7),
+                      padding:const EdgeInsets.symmetric(horizontal:14,vertical:11),
+                      decoration:BoxDecoration(color:kCard,borderRadius:BorderRadius.circular(11),border:Border.all(color:kBorder)),
+                      child:Row(mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[
+                        Text(item['name']??'',style:const TextStyle(fontWeight:FontWeight.w700)),
+                        Text(item['price']??'',style:const TextStyle(color:kOrange,fontWeight:FontWeight.w800))])))],
+                  if(shop.whatsapp!=null)...[const SizedBox(height:14),
+                    GestureDetector(onTap:()=>launchUrl(Uri.parse('https://wa.me/${shop.whatsapp}')),
+                      child:Container(width:double.infinity,padding:const EdgeInsets.all(15),
+                        decoration:BoxDecoration(color:const Color(0xFF25D366),borderRadius:BorderRadius.circular(14)),
+                        child:const Row(mainAxisAlignment:MainAxisAlignment.center,children:[
+                          Icon(Icons.chat,color:Colors.white),SizedBox(width:8),
+                          Text('تواصل عبر واتساب',style:TextStyle(color:Colors.white,fontWeight:FontWeight.w800,fontSize:14))]))]])])))));
+          }
+
+          // ══════════════════════════════════════════════
+          // DOCTORS SCREEN
+          // ══════════════════════════════════════════════
+          class DoctorsScreen extends StatefulWidget {
+            const DoctorsScreen({super.key});
+            @override State<DoctorsScreen> createState() => _DocsState();
+          }
+          class _DocsState extends State<DoctorsScreen> {
+            late List<Doctor> _docs; String _q='';
+            @override void initState() { super.initState(); _docs=Storage.getDoctors(); }
+            List<Doctor> get _f => _docs.where((d)=>_q.isEmpty||d.name.contains(_q)||d.specialty.contains(_q))
+              .toList()..sort((a,b)=>(b.isVerified?1:0)-(a.isVerified?1:0));
+            @override Widget build(BuildContext ctx) => Scaffold(backgroundColor:kBg,
+              appBar:AppBar(title:const Text('دليل الأطباء'),leading:IconButton(icon:const Icon(Icons.arrow_forward_ios),onPressed:()=>Navigator.pop(ctx))),
+              body:Column(children:[Container(color:kCard,padding:const EdgeInsets.all(16),
+                child:searchField('ابحث عن طبيب أو تخصص...',(v)=>setState(()=>_q=v))),
+                Expanded(child:_f.isEmpty?const Center(child:Text('لا توجد نتائج',style:TextStyle(color:kSub)))
+                  :ListView.builder(padding:const EdgeInsets.all(16),itemCount:_f.length,
+                    itemBuilder:(_,i){final d=_f[i];return ItemCard(title:d.name,subtitle:d.specialty,
+                      location:d.location,imageUrl:d.imageUrl??'https://picsum.photos/seed/doc/200/200',
+                      isVerified:d.isVerified,onTap:()=>Navigator.push(ctx,MaterialPageRoute(builder:(_)=>DoctorDetail(doc:d))));}))]));
+          }
+
+          class DoctorDetail extends StatelessWidget {
+            final Doctor doc; const DoctorDetail({super.key,required this.doc});
+            @override Widget build(BuildContext ctx) => Scaffold(backgroundColor:kBg,
+              appBar:AppBar(title:const Text('بيانات الطبيب'),leading:IconButton(icon:const Icon(Icons.arrow_forward_ios),onPressed:()=>Navigator.pop(ctx))),
+              body:SingleChildScrollView(child:Column(children:[
+                Container(width:double.infinity,padding:const EdgeInsets.all(22),
+                  decoration:const BoxDecoration(gradient:LinearGradient(colors:[kPrimary,kDark],begin:Alignment.topRight,end:Alignment.bottomLeft)),
+                  child:Row(children:[CircleAvatar(radius:34,backgroundImage:NetworkImage(doc.imageUrl??'https://picsum.photos/seed/doc/100/100')),
+                    const SizedBox(width:14),
+                    Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                      Row(children:[Text(doc.name,style:const TextStyle(color:Colors.white,fontWeight:FontWeight.w900,fontSize:17)),
+                        if(doc.isVerified)...[const SizedBox(width:5),const Icon(Icons.verified,color:Colors.white,size:16)]]),
+                      const SizedBox(height:4),Text(doc.specialty,style:const TextStyle(color:Colors.white70,fontSize:12))]))])),
+                Padding(padding:const EdgeInsets.all(20),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  Container(padding:const EdgeInsets.all(13),decoration:BoxDecoration(color:kPrimary.withOpacity(0.05),borderRadius:BorderRadius.circular(13)),
+                    child:Text(doc.description,style:const TextStyle(fontSize:13,height:1.8))),
+                  const SizedBox(height:14),
+                  detailRow(Icons.location_on,'العيادة',doc.location),
+                  detailRow(Icons.access_time,'أوقات الدوام',doc.hours),
+                  detailRow(Icons.phone,'رقم التواصل',doc.phone1,phone:true),
+                  if(doc.phone2!=null) detailRow(Icons.phone,'رقم بديل',doc.phone2!,phone:true)]))])));
+          }
+
+          // ══════════════════════════════════════════════
+          // TAXIS SCREEN
+          // ══════════════════════════════════════════════
+          class TaxisScreen extends StatefulWidget {
+            const TaxisScreen({super.key});
+            @override State<TaxisScreen> createState() => _TaxisState();
+          }
+          class _TaxisState extends State<TaxisScreen> {
+            late List<Taxi> _taxis; String _q='';
+            @override void initState() { super.initState(); _taxis=Storage.getTaxis(); }
+            List<Taxi> get _f => _taxis.where((t)=>_q.isEmpty||t.name.contains(_q)||t.carType.contains(_q)||t.location.contains(_q))
+              .toList()..sort((a,b)=>(b.isVerified?1:0)-(a.isVerified?1:0));
+            @override Widget build(BuildContext ctx) => Scaffold(backgroundColor:kBg,
+              appBar:AppBar(title:const Text('دليل التكسي'),leading:IconButton(icon:const Icon(Icons.arrow_forward_ios),onPressed:()=>Navigator.pop(ctx))),
+              body:Column(children:[Container(color:kCard,padding:const EdgeInsets.all(16),
+                child:searchField('ابحث عن سائق أو منطقة...',(v)=>setState(()=>_q=v))),
+                Expanded(child:_f.isEmpty?const Center(child:Text('لا توجد نتائج',style:TextStyle(color:kSub)))
+                  :ListView.builder(padding:const EdgeInsets.all(16),itemCount:_f.length,
+                    itemBuilder:(_,i){final t=_f[i];return ItemCard(title:t.name,subtitle:t.carType,
+                      location:t.location,imageUrl:t.imageUrl??'https://picsum.photos/seed/taxi/200/200',
+                      isVerified:t.isVerified,onTap:()=>Navigator.push(ctx,MaterialPageRoute(builder:(_)=>TaxiDetail(taxi:t))));}))]));
+          }
+
+          class TaxiDetail extends StatelessWidget {
+            final Taxi taxi; const TaxiDetail({super.key,required this.taxi});
+            @override Widget build(BuildContext ctx) => Scaffold(backgroundColor:kBg,
+              appBar:AppBar(title:const Text('بيانات السائق'),leading:IconButton(icon:const Icon(Icons.arrow_forward_ios),onPressed:()=>Navigator.pop(ctx))),
+              body:SingleChildScrollView(child:Column(children:[
+                Container(width:double.infinity,padding:const EdgeInsets.all(22),
+                  decoration:BoxDecoration(gradient:LinearGradient(colors:[kYellow,kYellow.withOpacity(0.7)],begin:Alignment.topRight,end:Alignment.bottomLeft)),
+                  child:Row(children:[CircleAvatar(radius:34,backgroundImage:NetworkImage(taxi.imageUrl??'https://picsum.photos/seed/taxi/100/100')),
+                    const SizedBox(width:14),
+                    Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                      Row(children:[Text(taxi.name,style:const TextStyle(color:Colors.white,fontWeight:FontWeight.w900,fontSize:17)),
+                        if(taxi.isVerified)...[const SizedBox(width:5),const Icon(Icons.verified,color:Colors.white,size:16)]]),
+                      const SizedBox(height:6),
+                      Container(padding:const EdgeInsets.symmetric(horizontal:10,vertical:4),
+                        decoration:BoxDecoration(color:Colors.white30,borderRadius:BorderRadius.circular(20)),
+                        child:Text('🚕 ${taxi.carType}',style:const TextStyle(color:Colors.white,fontWeight:FontWeight.w700,fontSize:11)))]))])),
+                Padding(padding:const EdgeInsets.all(20),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                  Container(padding:const EdgeInsets.all(13),decoration:BoxDecoration(color:kYellow.withOpacity(0.07),borderRadius:BorderRadius.circular(13)),
+                    child:Text(taxi.description,style:const TextStyle(fontSize:13,height:1.8))),
+                  const SizedBox(height:14),
+                  detailRow(Icons.location_on,'منطقة العمل',taxi.location),
+                  if(taxi.hours!=null) detailRow(Icons.access_time,'أوقات العمل',taxi.hours!),
+                  detailRow(Icons.phone,'رقم التواصل',taxi.phone1,phone:true),
+                  if(taxi.phone2!=null) detailRow(Icons.phone,'رقم بديل',taxi.phone2!,phone:true)]))])));
+          }
+          MAINDART
+
+      - name: كتابة AndroidManifest.xml
+        run: |
+          mkdir -p shirqat/android/app/src/main
+          cat > shirqat/android/app/src/main/AndroidManifest.xml << 'XML'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.CALL_PHONE"/>
+              <application android:label="دليل الشرقاط" android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher" android:usesCleartextTraffic="true">
+                  <activity android:name=".MainActivity" android:exported="true"
+                      android:launchMode="singleTop" android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true" android:windowSoftInputMode="adjustResize">
+                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme"/>
+                      <intent-filter><action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+                  </activity>
+                  <meta-data android:name="flutterEmbedding" android:value="2"/>
+              </application>
+          </manifest>
+          XML
+
+      - name: إنشاء Flutter project والبناء
+        run: |
+          flutter create --org com.shirqat --project-name shirqat_guide shirqat_build
+          cp shirqat/pubspec.yaml shirqat_build/pubspec.yaml
+          cp shirqat/lib/main.dart shirqat_build/lib/main.dart
+          cp shirqat/android/app/src/main/AndroidManifest.xml shirqat_build/android/app/src/main/AndroidManifest.xml
+          cd shirqat_build
+          flutter pub get
+          flutter build apk --release --no-tree-shake-icons
+
+      - name: رفع APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: دليل-الشرقاط-APK
+          path: shirqat_build/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      - name: رسالة النجاح
+        run: echo "✅ تم بناء APK بنجاح! اذهب إلى Actions واضغط على دليل-الشرقاط-APK لتحميله"
+
